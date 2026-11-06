@@ -24,6 +24,31 @@ hubs = pd.read_csv("data/hubs.csv")
 print("Raw shipment rows:", len(raw))
 print("Hub rows:", len(hubs))
 
+# Capture raw-data checks before cleaning
+raw_rows = len(raw)
+
+raw_dedup = raw.drop_duplicates()
+
+duplicate_rows_removed = raw_rows - len(raw_dedup)
+
+missing_distance_before = raw_dedup["distance_km"].isna().sum()
+
+missing_weight_before = raw_dedup["parcel_weight_kg"].isna().sum()
+
+sentinel_weight_rows = (
+    raw_dedup["parcel_weight_kg"] > 100
+).sum()
+
+missing_declared_value_before = (
+    raw_dedup["declared_value"].isna().sum()
+)
+
+missing_payment_mode_before = (
+    raw_dedup["payment_mode"].isna().sum()
+)
+
+service_spellings_before = raw_dedup["service_type"].nunique()
+
 
 # Clean shipment data
 clean_df, medians = clean_shipments(raw)
@@ -246,6 +271,114 @@ print(
     "Log declared value median:",
     round(modelling_df["log_declared_value"].median(), 3)
 )
+
+# --------------------------------------------------
+# 12. Save required Part A checks
+# --------------------------------------------------
+
+checks = {
+    "raw_rows": raw_rows,
+    "duplicate_rows_removed": duplicate_rows_removed,
+    "rows_after_dedup": len(raw_dedup),
+    "missing_distance_km_before": missing_distance_before,
+    "missing_parcel_weight_before": missing_weight_before,
+    "sentinel_weight_rows": sentinel_weight_rows,
+    "missing_declared_value_before": missing_declared_value_before,
+    "missing_payment_mode_before": missing_payment_mode_before,
+    "service_type_spellings_before": service_spellings_before,
+    "service_type_spellings_after": modelling_df["service_type"].nunique(),
+    "median_distance_km": round(medians["distance_km"], 2),
+    "median_parcel_weight_kg": round(medians["parcel_weight_kg"], 2),
+    "median_declared_value_inr": round(medians["declared_value_inr"], 2),
+    "rows_after_hub_merge": len(modelling_df),
+    "nulls_in_features_and_target": modelling_df[
+        FEATURES + ["delivery_hours", "is_delayed"]
+    ].isnull().sum().sum(),
+    "delayed_count": int(modelling_df["is_delayed"].sum()),
+    "delay_rate": round(modelling_df["is_delayed"].mean(), 4),
+    "hours_q1": round(q1, 2),
+    "hours_q3": round(q3, 2),
+    "hours_lower_bound": round(lower_bound, 2),
+    "hours_upper_bound": round(upper_bound, 2),
+    "hours_outlier_count": len(outliers),
+    "declared_value_mean_inr": round(
+        modelling_df["declared_value_inr"].mean(), 2
+    ),
+    "declared_value_median_inr": round(
+        modelling_df["declared_value_inr"].median(), 2
+    ),
+    "log_declared_value_mean": round(
+        modelling_df["log_declared_value"].mean(), 3
+    ),
+    "log_declared_value_median": round(
+        modelling_df["log_declared_value"].median(), 3
+    ),
+}
+
+pd.DataFrame(
+    list(checks.items()),
+    columns=["metric", "value"]
+).to_csv("outputs/part_a_checks.csv", index=False)
+
+
+# --------------------------------------------------
+# 13. Save combined Part A delay-by-group evidence
+# --------------------------------------------------
+
+group_results = []
+
+for dimension in ["service_type", "hub_tier", "distance_band"]:
+    grouped = modelling_df.groupby(
+        dimension,
+        observed=False
+    ).agg(
+        shipments=("is_delayed", "count"),
+        delayed=("is_delayed", "sum"),
+        delay_rate=("is_delayed", "mean"),
+        mean_hours=("delivery_hours", "mean")
+    ).reset_index()
+
+    grouped = grouped.rename(columns={dimension: "group"})
+    grouped.insert(0, "dimension", dimension)
+
+    group_results.append(grouped)
+
+part_a_delay_by_group = pd.concat(
+    group_results,
+    ignore_index=True
+)
+
+part_a_delay_by_group["delay_rate"] = (
+    part_a_delay_by_group["delay_rate"].round(4)
+)
+
+part_a_delay_by_group["mean_hours"] = (
+    part_a_delay_by_group["mean_hours"].round(2)
+)
+
+part_a_delay_by_group.to_csv(
+    "outputs/part_a_delay_by_group.csv",
+    index=False
+)
+
+# --------------------------------------------------
+# 14. Save full Part A correlation matrix
+# --------------------------------------------------
+
+numeric_columns = modelling_df.select_dtypes(
+    include="number"
+).columns
+
+correlation_matrix = modelling_df[
+    numeric_columns
+].corr()
+
+correlation_matrix.to_csv(
+    "outputs/part_a_correlations.csv",
+    index=True
+)
+
+print("\nPart A checks saved successfully.")
 
 print("\nModelling table saved successfully.")
 print("Modelling table shape:", modelling_df.shape)
