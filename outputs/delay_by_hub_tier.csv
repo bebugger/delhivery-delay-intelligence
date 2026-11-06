@@ -1,0 +1,4 @@
+hub_tier,total_shipments,delayed_shipments,delay_rate
+1,400,16,0.04
+2,400,86,0.215
+3,400,176,0.44
